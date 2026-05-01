@@ -1,0 +1,57 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/">
+
+    <!-- Master fullscreen dimmer -->
+    <Frame name="FQFFrame" parent="UIParent" frameStrata="DIALOG" hidden="true">
+        <Size x="1" y="1"/>
+        <Anchors>
+            <Anchor point="TOPLEFT"/>
+            <Anchor point="BOTTOMRIGHT"/>
+        </Anchors>
+        <Layers>
+            <Layer level="BACKGROUND">
+                <Texture parentKey="Dimmer">
+                    <Anchors><Anchor point="TOPLEFT"/><Anchor point="BOTTOMRIGHT"/></Anchors>
+                    <Color r="0" g="0" b="0" a="0.75"/>
+                </Texture>
+            </Layer>
+        </Layers>
+
+        <Frames>
+            <!-- Outer frame: faction background set in Lua -->
+            <Frame name="FQFParchmentFrame" frameLevel="2">
+                <Size x="1024" y="512"/>
+                <Anchors>
+                    <Anchor point="CENTER" x="0" y="0"/>
+                </Anchors>
+
+                <Frames>
+                    <!-- Player model: far left -->
+                    <PlayerModel name="FQFModelPlayer" frameLevel="3">
+                        <Size x="580" y="680"/>
+                        <Anchors>
+                            <Anchor point="BOTTOMLEFT" x="-120" y="-100"/>
+                        </Anchors>
+                    </PlayerModel>
+
+                    <!-- NPC model: far right -->
+                    <PlayerModel name="FQFModelNPC" frameLevel="3">
+                        <Size x="580" y="680"/>
+                        <Anchors>
+                            <Anchor point="BOTTOMRIGHT" x="120" y="-100"/>
+                        </Anchors>
+                    </PlayerModel>
+
+                    <!-- Inner parchment: centered, level 5, texture set in Lua -->
+                    <Frame name="FQFInnerFrame" frameLevel="5">
+                        <Size x="560" y="560"/>
+                        <Anchors>
+                            <Anchor point="CENTER" x="0" y="20"/>
+                        </Anchors>
+                    </Frame>
+
+                </Frames>
+            </Frame>
+        </Frames>
+    </Frame>
+
+</Ui>
