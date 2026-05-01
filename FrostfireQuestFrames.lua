@@ -1,5 +1,5 @@
 -- FrostfireQuestFrames.lua
--- v2.1
+-- v0.1
 
 local function Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[FQF]|r " .. tostring(msg))
