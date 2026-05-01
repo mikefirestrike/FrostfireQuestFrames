@@ -1,8 +1,8 @@
 ## Interface: 30300
 ## Title: Frostfire Quest Frames
 ## Notes: Immersive quest and gossip frame with 3D models and faction-themed backgrounds
-## Author: Mike
-## Version: 1.0
+## Author: MikeFirestrike
+## Version: 0.1
 
 FrostfireQuestFrames.xml
 FrostfireQuestFrames.lua
