@@ -1,5 +1,5 @@
 -- FrostfireQuestFrames.lua
--- v0.1
+-- v0.2c
 
 local function Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[FQF]|r " .. tostring(msg))
@@ -8,22 +8,72 @@ end
 local _, _, screenWidth, screenHeight = WorldFrame:GetBoundsRect()
 
 -- ============================================================
---  FACTION BACKGROUND
+--  SAVED VARIABLES & DEFAULTS
+-- ============================================================
+
+local DEFAULTS = {
+    bgHorde    = "custom:horde",
+    bgAlliance = "custom:alliance",
+    bgNeutral  = "custom:other",
+}
+
+FQFConfig = FQFConfig or {}
+
+local function GetCfg(key)
+    if FQFConfig[key] ~= nil then return FQFConfig[key] end
+    return DEFAULTS[key]
+end
+
+local function SetCfg(key, value)
+    FQFConfig[key] = value
+end
+
+-- ============================================================
+--  TEXTURE REGISTRY
 -- ============================================================
 
 local ART = "Interface\\AddOns\\FrostfireQuestFrames\\Art\\"
 
+-- Built-in textures. Add entries here to expose new options
+-- without touching the options UI code.
+local CUSTOM_TEXTURES = {
+    { label = "Horde",    key = "custom:horde",    path = ART .. "horde.tga"    },
+    { label = "Alliance", key = "custom:alliance", path = ART .. "alliance.tga" },
+    { label = "Neutral",  key = "custom:other",    path = ART .. "other.tga"    },
+}
+
+-- Resolve a config key to a texture path
+local function ResolveTexture(key)
+    if not key then return ART .. "other.tga" end
+    for _, t in ipairs(CUSTOM_TEXTURES) do
+        if t.key == key then return t.path end
+    end
+    return ART .. "other.tga"
+end
+
+-- ============================================================
+--  FACTION BACKGROUND
+-- ============================================================
+
 local function GetFactionBG()
     local npcFaction = UnitFactionGroup("target")
-    if npcFaction == "Horde" then return ART .. "horde.tga" end
-    if npcFaction == "Alliance" then return ART .. "alliance.tga" end
+    if npcFaction == "Horde" then
+        return ResolveTexture(GetCfg("bgHorde"))
+    end
+    if npcFaction == "Alliance" then
+        return ResolveTexture(GetCfg("bgAlliance"))
+    end
     if not npcFaction or npcFaction == "Neutral" or npcFaction == "" then
-        return ART .. "other.tga"
+        return ResolveTexture(GetCfg("bgNeutral"))
     end
     local playerFaction = UnitFactionGroup("player")
-    if playerFaction == "Horde" then return ART .. "horde.tga" end
-    if playerFaction == "Alliance" then return ART .. "alliance.tga" end
-    return ART .. "other.tga"
+    if playerFaction == "Horde" then
+        return ResolveTexture(GetCfg("bgHorde"))
+    end
+    if playerFaction == "Alliance" then
+        return ResolveTexture(GetCfg("bgAlliance"))
+    end
+    return ResolveTexture(GetCfg("bgNeutral"))
 end
 
 -- ============================================================
@@ -66,15 +116,50 @@ local function DelayCall(func, delay)
 end
 
 -- ============================================================
---  MODELS
+--  ANIMATION SYSTEM
 -- ============================================================
 
--- Animation durations matched to actual animation length
--- so SetSequenceTime stops exactly when the animation ends
 local ANIMS = {
-    NPC    = { {60, 3.0}, {60, 3.0}, {64, 2.5}, {209, 2.8}, {60, 3.5} },
+    NPC    = { {64, 2.5}, {64, 2.5}, {65, 2.8}, {67, 2.3}, {209, 2.8} },
     PLAYER = { {65, 2.8}, {185, 2.2}, {186, 2.0}, {113, 2.5}, {67, 2.3} },
 }
+
+local ANIMS_SAFE = {
+    NPC    = { {64, 2.8}, {67, 2.6} },
+    PLAYER = { {65, 3.0}, {67, 2.6} },
+}
+
+-- Player unit fallback: race/sex denylist for HD backport rigs.
+-- sex: 2 = male, 3 = female. Add entries as discovered.
+local ANIM_FALLBACK_RACES = {
+    ["Blood Elf"] = { [3] = true },
+}
+
+local function UnitNeedsAnimFallback(unit)
+    local race = UnitRace(unit)
+    if not race then return false end
+    local sex = UnitSex(unit)
+    return ANIM_FALLBACK_RACES[race] and ANIM_FALLBACK_RACES[race][sex] or false
+end
+
+-- NPC model fallback: UnitRace doesn't work on NPCs so we check the M2 path
+-- returned by GetModel() after SetUnit. Add substrings as more bad models found.
+local ANIM_FALLBACK_MODEL_SUBSTRINGS = {
+    "bloodelf", "belf",
+}
+
+local function ModelNeedsAnimFallback(model)
+    local path = ""
+    pcall(function()
+        local m = model:GetModel()
+        if type(m) == "string" then path = m end
+    end)
+    path = path:lower()
+    for _, substr in ipairs(ANIM_FALLBACK_MODEL_SUBSTRINGS) do
+        if path:find(substr) then return true end
+    end
+    return false
+end
 
 local function playAnim(model, sequence, duration)
     model.animTimer = 0
@@ -96,10 +181,136 @@ local function playAndStand(model, sequence, duration)
     playAnim(model, sequence, duration)
     DelayCall(function()
         if model.animToken == token then
-            -- sequence 0 immediately exits OnUpdate, letting engine take over
             playAnim(model, 0, 0)
         end
     end, duration)
+end
+
+local function playAnimSafe(model, sequence)
+    pcall(function() model:SetAnimation(sequence) end)
+end
+
+-- ============================================================
+--  CAMERA PROFILES
+-- ============================================================
+
+local CAMERA_PROFILES = {
+    humanoid = { camera = 1, scale = 1.0, x = 0, y = 0,    z = 0 },
+    large    = { camera = 1, scale = 0.5, x = 0, y = 1.5,  z = 0 },
+    small    = { camera = 1, scale = 1.4, x = 0, y = -0.3, z = 0 },
+    wide     = { camera = 1, scale = 0.7, x = 0, y = 0.5,  z = 0 },
+}
+
+local CREATURE_TYPE_PROFILE = {
+    ["Humanoid"]       = "humanoid",
+    ["Undead"]         = "humanoid",
+    ["Demon"]          = "humanoid",
+    ["Giant"]          = "large",
+    ["Dragonkin"]      = "large",
+    ["Elemental"]      = "wide",
+    ["Beast"]          = "small",
+    ["Mechanical"]     = "small",
+    ["Totem"]          = nil,
+    ["Non-combat Pet"] = nil,
+}
+
+-- Returns a profile table or nil (nil = object mode, hide NPC model)
+local function GetNPCProfile()
+    local creatureType = UnitCreatureType("target")
+    if creatureType == nil then return nil end
+    -- Check explicit nil mappings (Totem, Non-combat Pet) vs missing key
+    for k, _ in pairs(CREATURE_TYPE_PROFILE) do
+        if k == creatureType then
+            local profileName = CREATURE_TYPE_PROFILE[creatureType]
+            if profileName then return CAMERA_PROFILES[profileName] end
+            return nil
+        end
+    end
+    -- Not in table: fall back to humanoid
+    return CAMERA_PROFILES["humanoid"]
+end
+
+-- ============================================================
+--  NPC MODEL PANEL SHOW/HIDE
+-- ============================================================
+
+local npcModelHidden = false
+
+local function ShowNPCModel()
+    if npcModelHidden then
+        FQFModelNPC:Show()
+        FQFModelNPC:ClearAllPoints()
+        FQFModelNPC:SetPoint("BOTTOMRIGHT", FQFParchmentFrame, "BOTTOMRIGHT", 120, -100)
+        npcModelHidden = false
+    end
+end
+
+local function HideNPCModel()
+    if not npcModelHidden then
+        FQFModelNPC:Hide()
+        npcModelHidden = true
+    end
+end
+
+-- ============================================================
+--  MODELS
+-- ============================================================
+
+local function ApplyProfile(model, profile)
+    model:SetCamera(profile.camera)
+    model:SetFacing(-.75)
+    model:SetScale(profile.scale)
+    model:SetPosition(profile.x, profile.y, profile.z)
+end
+
+-- Schedule back-and-forth conversation animations between player and NPC.
+-- useSafeNPC/useSafePlayer route to SetAnimation instead of SetSequenceTime
+-- for models with broken HD backport rigs.
+local function ScheduleConversation(useSafeNPC, useSafePlayer)
+    local npcAnimSet    = useSafeNPC    and ANIMS_SAFE.NPC    or ANIMS.NPC
+    local playerAnimSet = useSafePlayer and ANIMS_SAFE.PLAYER or ANIMS.PLAYER
+    local t = 0.4
+    for i = 1, 5 do
+        local npcAnim    = npcAnimSet[math.random(#npcAnimSet)]
+        local playerAnim = playerAnimSet[math.random(#playerAnimSet)]
+        local nt = t
+        local pt = t + npcAnim[2] + 0.2
+
+        if useSafeNPC then
+            local seq = npcAnim[1]
+            DelayCall(function() playAnimSafe(FQFModelNPC, seq) end, nt)
+        else
+            local seq, dur = npcAnim[1], npcAnim[2]
+            DelayCall(function() playAndStand(FQFModelNPC, seq, dur) end, nt)
+        end
+
+        if useSafePlayer then
+            local seq = playerAnim[1]
+            DelayCall(function() playAnimSafe(FQFModelPlayer, seq) end, pt)
+        else
+            local seq, dur = playerAnim[1], playerAnim[2]
+            DelayCall(function() playAndStand(FQFModelPlayer, seq, dur) end, pt)
+        end
+
+        t = pt + playerAnim[2] + 0.2
+    end
+end
+
+local function SchedulePlayerAnims(useSafe)
+    local animSet = useSafe and ANIMS_SAFE.PLAYER or ANIMS.PLAYER
+    local t = 0.4
+    for i = 1, 3 do
+        local anim = animSet[math.random(#animSet)]
+        local nt = t
+        if useSafe then
+            local seq = anim[1]
+            DelayCall(function() playAnimSafe(FQFModelPlayer, seq) end, nt)
+        else
+            local seq, dur = anim[1], anim[2]
+            DelayCall(function() playAndStand(FQFModelPlayer, seq, dur) end, nt)
+        end
+        t = nt + anim[2] + 0.3
+    end
 end
 
 local function SetupModels(targetType)
@@ -110,30 +321,37 @@ local function SetupModels(targetType)
     FQFModelPlayer:SetPosition(0, 0, 0)
     FQFModelPlayer:SetScale(1.0)
 
-    FQFModelNPC:SetLight(1, 0, 0, 1, 1, 1, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
-    FQFModelNPC:SetCamera(1)
-    FQFModelNPC:SetFacing(-.75)
-    FQFModelNPC:SetUnit(targetType or "target", false)
-    FQFModelNPC:SetPosition(0, 0, 0)
-    FQFModelNPC:SetScale(1.0)
+    local profile = GetNPCProfile()
 
-    -- schedule conversation - NPC speaks, player responds, repeat
-    local t = 0.4
-    for i = 1, 5 do
-        local npcAnim    = ANIMS.NPC[math.random(#ANIMS.NPC)]
-        local playerAnim = ANIMS.PLAYER[math.random(#ANIMS.PLAYER)]
-        local nt = t
-        local pt = t + npcAnim[2] + 0.2
-        DelayCall(function() playAndStand(FQFModelNPC,    npcAnim[1],    npcAnim[2])    end, nt)
-        DelayCall(function() playAndStand(FQFModelPlayer, playerAnim[1], playerAnim[2]) end, pt)
-        t = pt + playerAnim[2] + 0.2
+    if profile == nil then
+        -- Object/totem: no NPC model, player animates solo
+        HideNPCModel()
+        SchedulePlayerAnims(UnitNeedsAnimFallback("player"))
+        return
     end
+
+    ShowNPCModel()
+    FQFModelNPC:SetLight(1, 0, 0, 1, 1, 1, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+    -- Apply profile BEFORE SetUnit so facing/scale are set as part of the
+    -- model load, matching original behavior that worked correctly.
+    ApplyProfile(FQFModelNPC, profile)
+    FQFModelNPC:SetUnit("target", false)
+
+    -- GetModel() isn't populated until SetUnit's model load completes, so
+    -- delay the fallback check and conversation scheduling by one short tick.
+    -- ApplyProfile stays before SetUnit so facing is unaffected.
+    local useSafePlayer = UnitNeedsAnimFallback("player")
+    DelayCall(function()
+        local useSafeNPC = ModelNeedsAnimFallback(FQFModelNPC)
+        ScheduleConversation(useSafeNPC, useSafePlayer)
+    end, 0.1)
 end
 
 local function ClearModels()
     for i = #timers, 1, -1 do table.remove(timers, i) end
     pcall(function() FQFModelPlayer:ClearModel() end)
     pcall(function() FQFModelNPC:ClearModel() end)
+    ShowNPCModel()
 end
 
 -- ============================================================
@@ -262,7 +480,9 @@ local function ResizeQuestInternals()
                         if name:find("Scroll") and not name:find("Bar") then
                             child:ClearAllPoints()
                             child:SetPoint("TOPLEFT",     panel, "TOPLEFT",     10, -70)
-                            child:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -26, 70)
+                            -- Bottom boundary raised to +90 so reward items
+                            -- don't bleed into the button zone
+                            child:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -26, 90)
                         end
                     end
                 end
@@ -277,11 +497,12 @@ local function ResizeQuestInternals()
             b:SetPoint(point, QuestFrame, relPoint, x, y)
         end
     end
-    MoveBtn("QuestFrameAcceptButton",   "BOTTOMLEFT",  "BOTTOMLEFT",   20, 10)
-    MoveBtn("QuestFrameDeclineButton",  "BOTTOMRIGHT", "BOTTOMRIGHT", -20, 10)
-    MoveBtn("QuestFrameCompleteButton", "BOTTOMLEFT",  "BOTTOMLEFT",   20, 10)
-    MoveBtn("QuestFrameGoodbyeButton",  "BOTTOMRIGHT", "BOTTOMRIGHT", -20, 10)
-    MoveBtn("QuestFrameCancelButton",   "BOTTOMRIGHT", "BOTTOMRIGHT", -20, 10)
+    MoveBtn("QuestFrameAcceptButton",   "BOTTOMLEFT",  "BOTTOMLEFT",   20,  10)
+    MoveBtn("QuestFrameDeclineButton",  "BOTTOMRIGHT", "BOTTOMRIGHT", -20,  10)
+    -- Nudged down to -5 to clear reward item overlap
+    MoveBtn("QuestFrameCompleteButton", "BOTTOMLEFT",  "BOTTOMLEFT",   20,  -5)
+    MoveBtn("QuestFrameGoodbyeButton",  "BOTTOMRIGHT", "BOTTOMRIGHT", -20,  10)
+    MoveBtn("QuestFrameCancelButton",   "BOTTOMRIGHT", "BOTTOMRIGHT", -20,  10)
 end
 
 -- ============================================================
@@ -362,6 +583,138 @@ local function HideFQF()
 end
 
 -- ============================================================
+--  OPTIONS PANEL
+-- ============================================================
+
+-- Pending values held while the panel is open; committed only on Okay
+local pending = {}
+local optPanel = nil
+
+-- Builds a row of selection buttons and preview box for one background slot.
+local function CreateBGSlot(parent, yOffset, labelText, configKey)
+    local lbl = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    lbl:SetPoint("TOPLEFT", parent, "TOPLEFT", 16, yOffset)
+    lbl:SetText(labelText)
+
+    -- Preview box
+    local box = CreateFrame("Frame", nil, parent)
+    box:SetSize(128, 64)
+    box:SetPoint("TOPLEFT", parent, "TOPLEFT", 390, yOffset - 4)
+    box:SetBackdrop({
+        bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 8,
+        insets   = { left = 2, right = 2, top = 2, bottom = 2 },
+    })
+    box:SetBackdropColor(0, 0, 0, 1)
+    local prevTex = box:CreateTexture(nil, "ARTWORK")
+    prevTex:SetPoint("TOPLEFT",     box, "TOPLEFT",     2, -2)
+    prevTex:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -2,  2)
+
+    local buttons = {}
+
+    local function UpdateButtons()
+        local currentKey = pending[configKey] or GetCfg(configKey)
+        for _, btn in ipairs(buttons) do
+            if btn.texKey == currentKey then
+                btn:LockHighlight()
+            else
+                btn:UnlockHighlight()
+            end
+        end
+        prevTex:SetTexture(ResolveTexture(currentKey))
+    end
+
+    for i, t in ipairs(CUSTOM_TEXTURES) do
+        local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+        btn:SetSize(110, 22)
+        btn:SetPoint("TOPLEFT", parent, "TOPLEFT", 16 + (i - 1) * 118, yOffset - 22)
+        btn:SetText(t.label)
+        btn.texKey = t.key
+        btn:SetScript("OnClick", function()
+            pending[configKey] = t.key
+            UpdateButtons()
+        end)
+        table.insert(buttons, btn)
+    end
+
+    local slot = {}
+    slot.Refresh = UpdateButtons
+    UpdateButtons()
+    return slot
+end
+
+local function CreateOptionsPanel()
+    local panel = CreateFrame("Frame", "FQFOptionsPanel", UIParent)
+    panel.name  = "Frostfire Quest Frames"
+
+    -- Title
+    local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -16)
+    title:SetText("Frostfire Quest Frames")
+
+    local ver = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    ver:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -2)
+    ver:SetText("v0.2c  |  by MikeFirestrike")
+    ver:SetTextColor(.6, .6, .6)
+
+    -- Divider line (SetColorTexture doesn't exist in 3.3.5a; use client separator)
+    local div = panel:CreateTexture(nil, "ARTWORK")
+    div:SetHeight(16)
+    div:SetPoint("TOPLEFT",  ver, "BOTTOMLEFT",  0, -6)
+    div:SetPoint("TOPRIGHT", panel, "TOPRIGHT",  -16, 0)
+    div:SetTexture("Interface\\Common\\UI-TooltipDivider-Transparent")
+
+    -- Section header
+    local secHdr = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    secHdr:SetPoint("TOPLEFT", div, "BOTTOMLEFT", 0, -12)
+    secHdr:SetText("Faction Backgrounds")
+    secHdr:SetTextColor(1, .82, 0)
+
+    local secDesc = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    secDesc:SetPoint("TOPLEFT", secHdr, "BOTTOMLEFT", 0, -4)
+    secDesc:SetText("Choose the background texture shown for each faction. Changes take effect on the next NPC interaction.")
+    secDesc:SetTextColor(.75, .75, .75)
+
+    -- Three background slots
+    local ddH = CreateBGSlot(panel, -130, "Horde",            "bgHorde")
+    local ddA = CreateBGSlot(panel, -200, "Alliance",         "bgAlliance")
+    local ddN = CreateBGSlot(panel, -270, "Neutral / Unknown","bgNeutral")
+
+    -- Blizzard panel callbacks.
+    -- Clear pending in-place (not by replacing the table) so dropdown
+    -- closures that captured the original reference stay in sync.
+    local function ClearPending()
+        for k in pairs(pending) do pending[k] = nil end
+    end
+
+    panel.okay = function()
+        for k, v in pairs(pending) do
+            SetCfg(k, v)
+        end
+        ClearPending()
+        -- outerTex:SetTexture is called fresh every ShowFQF so no reset needed
+    end
+
+    panel.cancel = function()
+        ClearPending()
+        ddH:Refresh()
+        ddA:Refresh()
+        ddN:Refresh()
+    end
+
+    panel.refresh = function()
+        ClearPending()
+        ddH:Refresh()
+        ddA:Refresh()
+        ddN:Refresh()
+    end
+
+    InterfaceOptions_AddCategory(panel)
+    optPanel = panel
+end
+
+-- ============================================================
 --  EVENTS
 -- ============================================================
 
@@ -377,8 +730,12 @@ listener:RegisterEvent("PLAYER_ENTERING_WORLD")
 
 listener:SetScript("OnEvent", function()
     if event == "PLAYER_ENTERING_WORLD" then
-        -- force gossip to always show so single-option NPCs don't skip our frame
         ForceGossip = function() return true end
+        -- Fill any missing keys with defaults
+        for k, v in pairs(DEFAULTS) do
+            if FQFConfig[k] == nil then FQFConfig[k] = v end
+        end
+        if not optPanel then CreateOptionsPanel() end
     elseif event == "GOSSIP_SHOW" then
         ShowFQF(GossipFrame, "npc", true)
     elseif event == "GOSSIP_CLOSED" then
@@ -399,11 +756,30 @@ SLASH_FROSTFIREQF1 = "/ffqf"
 SlashCmdList["FROSTFIREQF"] = function(msg)
     msg = msg and msg:lower() or ""
     if msg == "hide" then
-        HideFQF(); Print("Hidden.")
+        HideFQF()
+        Print("Hidden.")
+    elseif msg == "config" then
+        InterfaceOptionsFrame_OpenToCategory(optPanel)
     elseif msg == "reset" then
         questSized = false; gossipSized = false; vanillaStripped = false
         Print("Flags cleared.")
+    elseif msg == "animdebug" then
+        local pRace = UnitRace("player") or "?"
+        local pSex  = UnitSex("player") or "?"
+        local tType = UnitCreatureType("target") or "?"
+        local npcModelRaw = FQFModelNPC:GetModel()
+        local npcModel = (type(npcModelRaw) == "string") and npcModelRaw or "?"
+        Print(string.format("Player: %s sex=%s fallback=%s",
+            pRace, pSex, tostring(UnitNeedsAnimFallback("player"))))
+        Print(string.format("Target: type=%s model=%s", tType, npcModel))
+        Print(string.format("NPC safe fallback: %s", tostring(ModelNeedsAnimFallback(FQFModelNPC))))
+        local profile = GetNPCProfile()
+        if profile then
+            Print(string.format("Profile: scale=%.2f y=%.2f", profile.scale, profile.y))
+        else
+            Print("Profile: nil (object mode — NPC model hidden)")
+        end
     else
-        Print("/ffqf hide | reset")
+        Print("/ffqf hide | config | reset | animdebug")
     end
 end

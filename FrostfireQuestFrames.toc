@@ -2,7 +2,8 @@
 ## Title: Frostfire Quest Frames
 ## Notes: Immersive quest and gossip frame with 3D models and faction-themed backgrounds
 ## Author: MikeFirestrike
-## Version: 0.1
+## Version: 0.2c
+## SavedVariables: FQFConfig
 
 FrostfireQuestFrames.xml
 FrostfireQuestFrames.lua
