@@ -2,7 +2,7 @@
 
 # Frostfire Quest Frames
 
-**Version 0.2c**
+**Version 0.2d**
 
 An immersive quest and gossip dialogue replacement for **World of Warcraft: Wrath of the Lich King (3.3.5a enUS client)**.
 
@@ -113,6 +113,9 @@ The new option will appear as a button in the options panel automatically.
 ---
 
 ## Changelog
+
+### v0.2d
+- Fixed animation stutter and sequence fighting when clicking through gossip options on the same NPC — `GOSSIP_SHOW` fires on every option selection, which was causing `SetupModels` to reload both 3D models and re-queue a full new conversation animation chain on top of any still-running timers. Models now only reload on a fresh frame open; subsequent gossip pages reuse the existing models. Pending animation timers are flushed on every `ShowFQF` call as an additional safety net.
 
 ### v0.2c
 - Fixed background texture not updating correctly when switching back to a previously used faction background (stacked texture objects were being created on each panel Okay)

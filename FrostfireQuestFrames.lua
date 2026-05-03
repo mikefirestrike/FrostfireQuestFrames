@@ -1,5 +1,5 @@
 -- FrostfireQuestFrames.lua
--- v0.2c
+-- v0.2d
 
 local function Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[FQF]|r " .. tostring(msg))
@@ -549,6 +549,11 @@ local outerTex
 local innerTex
 
 local function ShowFQF(vanillaFrame, targetType, isGossip)
+    -- Flush any in-flight animation timers before potentially re-running
+    -- SetupModels. Gossip option clicks re-fire GOSSIP_SHOW on the same NPC,
+    -- which would stack new timers on top of old ones and cause animation chaos.
+    for i = #timers, 1, -1 do table.remove(timers, i) end
+
     FQFInnerFrame:SetSize(INNER_W, INNER_H)
 
     if not outerTex then
@@ -563,9 +568,18 @@ local function ShowFQF(vanillaFrame, targetType, isGossip)
         innerTex:SetTexture(ART .. "ParchmentBG.tga")
     end
 
+    -- Only set up models on a fresh open. If the frame is already visible the
+    -- player is clicking through gossip options with the same NPC — no need to
+    -- reload models or restart the conversation loop.
+    local alreadyVisible = FQFFrame:IsShown()
+
     FQFFrame:Show()
     BanishFrames()
-    SetupModels(targetType)
+
+    if not alreadyVisible then
+        SetupModels(targetType)
+    end
+
     StripVanillaChrome()
     PositionVanillaFrame(vanillaFrame)
 
@@ -655,7 +669,7 @@ local function CreateOptionsPanel()
 
     local ver = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     ver:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -2)
-    ver:SetText("v0.2c  |  by MikeFirestrike")
+    ver:SetText("v0.2d  |  by MikeFirestrike")
     ver:SetTextColor(.6, .6, .6)
 
     -- Divider line (SetColorTexture doesn't exist in 3.3.5a; use client separator)
